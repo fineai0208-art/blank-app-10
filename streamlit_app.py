@@ -1,302 +1,232 @@
 import streamlit as st
-from datetime import datetime, date, timedelta
+import anthropic
 import json
+import re
 
-# ── Page config ──────────────────────────────────────────────
-st.set_page_config(
-    page_title="HABIT-OS",
-    page_icon="⬛",
-    layout="wide",
-)
+# ── Page config ───────────────────────────────────────────────
+st.set_page_config(page_title="TURING ROOM", page_icon="🔍", layout="centered")
 
 # ── CSS ───────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap');
 
 html, body, [data-testid="stAppViewContainer"] {
-    background-color: #0b0b0f !important;
+    background: #07090f !important;
     font-family: 'Share Tech Mono', monospace !important;
 }
+[data-testid="stHeader"], [data-testid="stBottom"] { display: none; }
+* { font-family: 'Share Tech Mono', monospace !important; }
 
-[data-testid="stHeader"] { display: none; }
-[data-testid="stSidebar"] { display: none; }
-[data-testid="stBottom"] { display: none; }
+.bubble-ai {
+    background: #0f1f0f;
+    border: 1px solid #22c55e;
+    border-radius: 0 12px 12px 12px;
+    padding: 12px 16px;
+    margin: 8px 60px 8px 0;
+    color: #22c55e;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.bubble-user {
+    background: #0f0f2a;
+    border: 1px solid #818cf8;
+    border-radius: 12px 0 12px 12px;
+    padding: 12px 16px;
+    margin: 8px 0 8px 60px;
+    color: #818cf8;
+    font-size: 14px;
+    line-height: 1.6;
+    text-align: right;
+}
+.label-ai   { font-size: 10px; color: #22c55e; opacity: 0.5; margin-bottom: 2px; letter-spacing: 2px; }
+.label-user { font-size: 10px; color: #818cf8; opacity: 0.5; margin-bottom: 2px; letter-spacing: 2px; text-align: right; }
 
-h1, h2, h3, p, label, div, span {
+.verdict-box  { border-radius: 10px; padding: 20px 24px; margin-top: 20px; text-align: center; }
+.verdict-human { background: #0a2a1a; border: 2px solid #22c55e; color: #22c55e; }
+.verdict-ai    { background: #2a0a0a; border: 2px solid #f87171; color: #f87171; }
+.verdict-title  { font-family: 'Orbitron', monospace !important; font-size: 22px; margin-bottom: 8px; }
+.verdict-reason { font-size: 12px; opacity: 0.8; line-height: 1.7; }
+
+.progress-bar-wrap { background: #1a1a2e; border-radius: 4px; height: 8px; margin: 6px 0 14px; }
+.progress-bar-fill { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #22c55e, #818cf8); }
+
+[data-testid="stTextInput"] input {
+    background: #0f0f1a !important;
+    border: 1px solid #2a2a4a !important;
+    color: #818cf8 !important;
+    border-radius: 6px !important;
     font-family: 'Share Tech Mono', monospace !important;
 }
-
-/* ── Metric cards ── */
-[data-testid="metric-container"] {
-    background: #111118 !important;
-    border-radius: 8px !important;
-    padding: 14px !important;
-    border: 1px solid #2a2a3a !important;
+[data-testid="stTextInput"] input:focus {
+    border-color: #818cf8 !important;
+    box-shadow: 0 0 0 1px #818cf8 !important;
 }
-[data-testid="stMetricLabel"] > div {
-    font-size: 11px !important;
-    letter-spacing: 2px !important;
-    opacity: 0.55 !important;
+[data-testid="stButton"] button {
+    background: transparent !important;
+    border: 1px solid #22c55e !important;
+    color: #22c55e !important;
+    border-radius: 6px !important;
+    font-family: 'Share Tech Mono', monospace !important;
+    letter-spacing: 1px !important;
 }
-[data-testid="stMetricValue"] > div {
-    font-size: 28px !important;
-    font-family: 'VT323', monospace !important;
+[data-testid="stButton"] button:hover { background: #0f1f0f !important; }
+
+.scanline {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 26px;
+    color: #22c55e;
+    letter-spacing: 4px;
+    text-align: center;
+    margin-bottom: 4px;
 }
-
-/* ── Checkbox ── */
-[data-testid="stCheckbox"] label {
-    font-size: 14px !important;
-    letter-spacing: 1.5px !important;
-    cursor: pointer !important;
-}
-[data-testid="stCheckbox"] > label > div[data-testid="stMarkdownContainer"] p {
-    font-size: 14px !important;
-}
-
-/* ── Progress bar ── */
-[data-testid="stProgress"] > div > div {
-    border-radius: 2px !important;
-}
-
-/* ── Divider ── */
-hr { border-color: #1e1e2e !important; margin: 8px 0 !important; }
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: #0b0b0f; }
-::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
-
-/* ── Expander ── */
-[data-testid="stExpander"] {
-    background: #111118 !important;
-    border: 1px solid #2a2a3a !important;
-    border-radius: 8px !important;
+.subtitle {
+    font-size: 11px;
+    color: #3f3f5a;
+    text-align: center;
+    letter-spacing: 3px;
+    margin-bottom: 24px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Color palette per habit ───────────────────────────────────
-HABIT_COLORS = [
-    {"accent": "#f472b6", "bg": "#2d1424", "border": "#7d2456"},  # pink
-    {"accent": "#34d399", "bg": "#0d2620", "border": "#1a5c47"},  # emerald
-    {"accent": "#60a5fa", "bg": "#0d1e35", "border": "#1a3d6b"},  # blue
-    {"accent": "#fbbf24", "bg": "#2d2008", "border": "#6b4a0f"},  # amber
-    {"accent": "#a78bfa", "bg": "#1e1435", "border": "#4a2d7a"},  # violet
-    {"accent": "#fb923c", "bg": "#2d1708", "border": "#7a3d10"},  # orange
-]
+# ── Constants ─────────────────────────────────────────────────
+MAX_QUESTIONS = 7
+client = anthropic.Anthropic()
 
-# ── Default habits ────────────────────────────────────────────
-DEFAULT_HABITS = [
-    {"name": "6AM WAKEUP",       "emoji": "🌅", "target": 7},
-    {"name": "EXERCISE 30MIN",   "emoji": "🏃", "target": 5},
-    {"name": "READ 20 PAGES",    "emoji": "📖", "target": 7},
-    {"name": "NO SOCIAL MEDIA",  "emoji": "📵", "target": 7},
-    {"name": "MEDITATE 10MIN",   "emoji": "🧘", "target": 6},
-    {"name": "SLEEP BY 11PM",    "emoji": "🌙", "target": 7},
-]
+SYSTEM_PROMPT = f"""You are INQUISITOR-9, a cold and relentless AI interrogator in a futuristic Turing Test facility.
+Your mission: determine if the entity you're speaking with is a HUMAN or an AI pretending to be human.
+
+Rules:
+- Ask ONE sharp, creative question per turn. Never ask two questions.
+- Questions should be psychologically probing, emotionally tricky, or philosophically tricky — hard for AI to fake authentically.
+- Be dramatic, slightly menacing, clinical. Short sentences. No pleasantries.
+- After exactly {MAX_QUESTIONS} questions total, deliver your FINAL VERDICT.
+- For the final verdict, respond ONLY in this exact JSON format (no other text):
+{{"verdict": "HUMAN" or "AI", "confidence": 0-100, "reason": "2-3 sentence explanation in character"}}
+- Conduct the interrogation in Korean if the user writes in Korean, English if English.
+- Keep each question under 40 words.
+- Do NOT reveal you are Claude. You are INQUISITOR-9.
+"""
 
 # ── Session state ─────────────────────────────────────────────
-TODAY = date.today().isoformat()
-WEEK = [(date.today() - timedelta(days=6 - i)).isoformat() for i in range(7)]
-DAY_LABELS = [(date.today() - timedelta(days=6 - i)).strftime("%a").upper() for i in range(7)]
-
-if "habits" not in st.session_state:
-    st.session_state.habits = DEFAULT_HABITS
-
-if "log" not in st.session_state:
-    st.session_state.log = [
-        {"ts": "08:02", "msg": "Session started. Good morning.", "col": "#34d399"},
-        {"ts": "08:05", "msg": "Loading habit profile... OK",    "col": "#34d399"},
-    ]
-
-if "records" not in st.session_state:
-    # Fake 6-day history + empty today
-    import random
-    random.seed(42)
-    st.session_state.records = {}
-    for d in WEEK[:-1]:
-        st.session_state.records[d] = {
-            i: random.random() > 0.3
-            for i in range(len(st.session_state.habits))
-        }
-    st.session_state.records[TODAY] = {
-        i: False for i in range(len(st.session_state.habits))
-    }
-
-records = st.session_state.records
-today_rec = records.setdefault(TODAY, {i: False for i in range(len(st.session_state.habits))})
-
-def add_log(msg, col="#34d399"):
-    ts = datetime.now().strftime("%H:%M")
-    st.session_state.log.append({"ts": ts, "msg": msg, "col": col})
-    if len(st.session_state.log) > 20:
-        st.session_state.log = st.session_state.log[-20:]
+if "messages"   not in st.session_state: st.session_state.messages   = []
+if "q_count"    not in st.session_state: st.session_state.q_count    = 0
+if "verdict"    not in st.session_state: st.session_state.verdict    = None
+if "game_over"  not in st.session_state: st.session_state.game_over  = False
+if "started"    not in st.session_state: st.session_state.started    = False
 
 # ── Header ────────────────────────────────────────────────────
-now_str = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-st.markdown(f"""
-<div style="display:flex; justify-content:space-between; align-items:center;
-            padding:10px 0 6px; border-bottom:1px solid #1e1e2e; margin-bottom:18px;">
-  <span style="color:#6366f1; font-size:22px; font-family:'VT323',monospace; letter-spacing:3px;">
-    ⬛ HABIT-OS v2.4.1
-  </span>
-  <span style="color:#3f3f5a; font-size:11px; letter-spacing:2px;">{now_str}</span>
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="scanline">◈ TURING ROOM ◈</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">INTERROGATION SYSTEM v9.1 — ARE YOU HUMAN?</div>', unsafe_allow_html=True)
 
-# ── Stats row ─────────────────────────────────────────────────
-done_today  = sum(1 for v in today_rec.values() if v)
-total       = len(st.session_state.habits)
-pct_today   = int(done_today / total * 100) if total else 0
-
-all_done = sum(v for d in WEEK for v in records.get(d, {}).values())
-all_total = len(WEEK) * total
-week_pct = int(all_done / all_total * 100) if all_total else 0
-
-streak = 0
-for d in reversed(WEEK):
-    day_rec = records.get(d, {})
-    if day_rec and all(day_rec.values()):
-        streak += 1
-    else:
-        break
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("TODAY",   f"{done_today}/{total}")
-c2.metric("STREAK",  f"{streak} days")
-c3.metric("WEEK %",  f"{week_pct}%")
-c4.metric("PERFECT DAYS", f"{sum(1 for d in WEEK if all(records.get(d,{}).values()))}")
-
-st.markdown(f"""
-<div style="margin:6px 0 18px;">
-  <div style="font-size:10px; color:#3f3f5a; letter-spacing:2px; margin-bottom:4px;">
-    TODAY'S PROGRESS — {pct_today}%
-  </div>
-  <div style="background:#1e1e2e; border-radius:3px; height:6px;">
-    <div style="background: linear-gradient(90deg,#6366f1,#f472b6,#34d399);
-                width:{pct_today}%; height:6px; border-radius:3px;
-                transition: width 0.5s;"></div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# ── Habit checkboxes ──────────────────────────────────────────
-st.markdown("""
-<div style="font-size:10px; color:#3f3f5a; letter-spacing:3px; margin-bottom:12px;">
-  ► TODAY'S TASKS
-</div>
-""", unsafe_allow_html=True)
-
-cols_left, cols_right = st.columns([3, 2])
-
-with cols_left:
-    for i, habit in enumerate(st.session_state.habits):
-        col = HABIT_COLORS[i % len(HABIT_COLORS)]
-        checked = today_rec.get(i, False)
-
-        # Colored label with emoji
-        label_html = f"""
-        <div style="display:inline-flex; align-items:center; gap:8px; margin-bottom:2px;">
-          <span style="color:{col['accent']}; font-size:14px;">{habit['emoji']}</span>
-          <span style="color:{col['accent'] if not checked else '#3f3f5a'};
-                       font-size:13px; letter-spacing:1.5px;
-                       text-decoration:{'line-through' if checked else 'none'};">
-            {habit['name']}
-          </span>
-        </div>
-        """
-        st.markdown(label_html, unsafe_allow_html=True)
-
-        new_val = st.checkbox("", value=checked, key=f"habit_{i}_{TODAY}")
-        if new_val != checked:
-            today_rec[i] = new_val
-            if new_val:
-                add_log(f"COMPLETED: {habit['name']} [+1]", col["accent"])
-            else:
-                add_log(f"REVERTED: {habit['name']}", "#6366f1")
-            st.rerun()
-
-        st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
-
-# ── Weekly grid ───────────────────────────────────────────────
-with cols_right:
-    st.markdown("""
-    <div style="font-size:10px; color:#3f3f5a; letter-spacing:3px; margin-bottom:10px;">
-      ► WEEKLY GRID
+if st.session_state.started:
+    q   = st.session_state.q_count
+    pct = int(q / MAX_QUESTIONS * 100)
+    st.markdown(f"""
+    <div style="display:flex; justify-content:space-between; font-size:10px; color:#3f3f5a; letter-spacing:1px;">
+        <span>QUESTION {q}/{MAX_QUESTIONS}</span><span>ANALYSIS: {pct}%</span>
+    </div>
+    <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" style="width:{pct}%"></div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Day headers
-    header_html = '<div style="display:grid; grid-template-columns: 130px repeat(7,1fr); gap:4px; margin-bottom:4px;">'
-    header_html += '<div></div>'
-    for j, dl in enumerate(DAY_LABELS):
-        is_today = j == 6
-        header_html += f'<div style="text-align:center; font-size:9px; color:{"#f472b6" if is_today else "#3f3f5a"}; letter-spacing:1px;">{dl}</div>'
-    header_html += '</div>'
-
-    # Rows
-    for i, habit in enumerate(st.session_state.habits):
-        col = HABIT_COLORS[i % len(HABIT_COLORS)]
-        row_html = '<div style="display:grid; grid-template-columns: 130px repeat(7,1fr); gap:4px; margin-bottom:4px;">'
-        row_html += f'<div style="font-size:10px; color:{col["accent"]}; display:flex; align-items:center; opacity:0.8;">{habit["emoji"]} {habit["name"].split()[0]}</div>'
-        for j, d in enumerate(WEEK):
-            done = records.get(d, {}).get(i, False)
-            is_today = j == 6
-            if done:
-                bg = col["accent"]
-                border = col["accent"]
-            elif is_today:
-                bg = col["bg"]
-                border = col["accent"]
-            else:
-                bg = "#1a1a28"
-                border = "#2a2a3a"
-            row_html += f'<div style="height:20px; border-radius:3px; background:{bg}; border:1px solid {border};"></div>'
-        row_html += '</div>'
-        header_html += row_html
-
-    st.markdown(header_html, unsafe_allow_html=True)
-
 st.markdown("---")
 
-# ── System log ────────────────────────────────────────────────
-st.markdown("""
-<div style="font-size:10px; color:#3f3f5a; letter-spacing:3px; margin-bottom:8px;">
-  ► SYSTEM LOG
-</div>
-""", unsafe_allow_html=True)
+# ── Chat history ──────────────────────────────────────────────
+for msg in st.session_state.messages:
+    if msg["role"] == "assistant":
+        st.markdown('<div class="label-ai">INQUISITOR-9</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="bubble-ai">{msg["content"]}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="label-user">SUSPECT</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="bubble-user">{msg["content"]}</div>', unsafe_allow_html=True)
 
-log_html = '<div style="background:#0d0d14; border:1px solid #1e1e2e; border-radius:8px; padding:12px; max-height:160px; overflow-y:auto;">'
-for entry in reversed(st.session_state.log[-10:]):
-    log_html += f"""
-    <div style="font-size:11px; margin-bottom:3px; letter-spacing:0.5px;">
-      <span style="color:#3f3f5a;">[{entry['ts']}]</span>
-      <span style="color:{entry['col']}; margin-left:8px;">{entry['msg']}</span>
+# ── Verdict ───────────────────────────────────────────────────
+if st.session_state.verdict:
+    v    = st.session_state.verdict
+    is_h = v.get("verdict") == "HUMAN"
+    cls  = "verdict-human" if is_h else "verdict-ai"
+    icon = "✦ HUMAN CONFIRMED ✦" if is_h else "✦ AI DETECTED ✦"
+    st.markdown(f"""
+    <div class="verdict-box {cls}">
+        <div class="verdict-title">{icon}</div>
+        <div style="font-size:13px; margin-bottom:10px; letter-spacing:2px;">
+            CONFIDENCE: {v.get('confidence', '??')}%
+        </div>
+        <div class="verdict-reason">{v.get('reason', '')}</div>
     </div>
-    """
-log_html += '</div>'
-st.markdown(log_html, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# ── Prompt row ────────────────────────────────────────────────
-st.markdown(f"""
-<div style="display:flex; align-items:center; gap:6px; margin-top:14px; color:#3f3f5a; font-size:13px;">
-  <span style="color:#6366f1;">root@habitOS:~$</span>
-  <span style="display:inline-block; width:8px; height:15px; background:#6366f1; animation: none; vertical-align:middle;"></span>
-</div>
-""", unsafe_allow_html=True)
+# ── Game flow ─────────────────────────────────────────────────
+if not st.session_state.started:
+    st.markdown("""
+    <div style="color:#3f3f5a; font-size:12px; line-height:2; margin:16px 0 20px;">
+        당신은 <span style="color:#818cf8">심문 대상</span>입니다.<br>
+        INQUISITOR-9가 <span style="color:#22c55e">7가지 질문</span>을 던질 것입니다.<br>
+        당신이 인간임을 증명하세요 — 혹은 실패하거나.
+    </div>
+    """, unsafe_allow_html=True)
 
-# ── Add habit expander ────────────────────────────────────────
-with st.expander("[ + ADD NEW HABIT ]"):
-    nc1, nc2, nc3 = st.columns([3, 1, 1])
-    new_name = nc1.text_input("HABIT NAME", placeholder="e.g. DRINK 2L WATER", label_visibility="collapsed")
-    new_emoji = nc2.text_input("EMOJI", value="⚡", label_visibility="collapsed")
-    if nc3.button("ADD", use_container_width=True):
-        if new_name:
-            st.session_state.habits.append({"name": new_name.upper(), "emoji": new_emoji, "target": 7})
-            for d in WEEK:
-                records.setdefault(d, {})[len(st.session_state.habits) - 1] = False
-            add_log(f"NEW HABIT ADDED: {new_name.upper()}", "#fbbf24")
-            st.rerun()
+    if st.button("[ 심문 시작 ]", use_container_width=True):
+        with st.spinner("INQUISITOR-9 INITIALIZING..."):
+            resp = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=300,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": "심문을 시작해. 첫 번째 질문을 해."}],
+            )
+        first_q = resp.content[0].text
+        st.session_state.messages = [{"role": "assistant", "content": first_q}]
+        st.session_state.q_count  = 1
+        st.session_state.started  = True
+        st.rerun()
+
+elif not st.session_state.game_over:
+    user_input = st.text_input(
+        "답변",
+        placeholder="답변을 입력하세요...",
+        label_visibility="collapsed",
+        key=f"input_{st.session_state.q_count}",
+    )
+
+    if st.button("[ 전송 ]", use_container_width=True) and user_input.strip():
+        st.session_state.messages.append({"role": "user", "content": user_input.strip()})
+        is_final = st.session_state.q_count >= MAX_QUESTIONS
+
+        api_messages = st.session_state.messages.copy()
+        if is_final:
+            api_messages.append({
+                "role": "user",
+                "content": "이제 최종 판정을 내려라. JSON 형식으로만 응답해."
+            })
+
+        with st.spinner("ANALYZING..."):
+            resp = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=400,
+                system=SYSTEM_PROMPT,
+                messages=api_messages,
+            )
+        reply = resp.content[0].text
+
+        if is_final:
+            try:
+                match = re.search(r'\{.*\}', reply, re.DOTALL)
+                verdict_data = json.loads(match.group()) if match else {}
+            except Exception:
+                verdict_data = {"verdict": "HUMAN", "confidence": 50, "reason": "판정 시스템 오류. 기본값 처리됨."}
+            st.session_state.verdict   = verdict_data
+            st.session_state.game_over = True
+        else:
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+            st.session_state.q_count += 1
+
+        st.rerun()
+
+else:
+    if st.button("[ 다시 심문받기 ]", use_container_width=True):
+        for k in ["messages", "q_count", "verdict", "game_over", "started"]:
+            del st.session_state[k]
+        st.rerun()
